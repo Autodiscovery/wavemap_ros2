@@ -149,6 +149,26 @@ map_operations:
 
 ---
 
+## Web Viewer
+
+A browser-based 3D viewer is included for real-time map visualization and save/load operations.
+
+```bash
+# 1. Install rosbridge
+sudo apt install ros-jazzy-rosbridge-suite
+
+# 2. Launch rosbridge
+ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+
+# 3. Open the viewer
+cd wavemap_viewer && python3 -m http.server 8080
+# Then open http://localhost:8080
+```
+
+Features: live PointCloud2 rendering, height/occupancy color modes, save/load via services, camera presets. See [wavemap_viewer/README.md](wavemap_viewer/README.md) for details.
+
+---
+
 ## Citation
 
 This project is built on the wavemap framework by [ETH Zürich ASL](https://github.com/ethz-asl/wavemap). Please cite the original paper when using this software for research:
