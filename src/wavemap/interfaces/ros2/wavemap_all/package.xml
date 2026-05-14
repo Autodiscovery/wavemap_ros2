@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>wavemap_all</name>
+  <version>2.0.0</version>
+  <description>Wavemap ROS2 metapackage — installs all wavemap packages.</description>
+  <maintainer email="wavemap@example.com">wavemap</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>wavemap</exec_depend>
+  <exec_depend>wavemap_msgs</exec_depend>
+  <exec_depend>wavemap_ros2_conversions</exec_depend>
+  <exec_depend>wavemap_ros2</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

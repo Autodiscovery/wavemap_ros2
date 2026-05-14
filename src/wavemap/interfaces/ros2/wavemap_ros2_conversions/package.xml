@@ -1,0 +1,27 @@
+<?xml version='1.0' encoding='utf-8'?>
+<package format="3">
+  <name>wavemap_ros2_conversions</name>
+  <version>2.2.1</version>
+  <description>Conversions between wavemap and ROS2 types.</description>
+
+  <maintainer email="victorr@ethz.ch">Victor Reijgwart</maintainer>
+  <license>BSD</license>
+  <url>https://github.com/ethz-asl/wavemap</url>
+
+  <author email="victorr@ethz.ch">Victor Reijgwart</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>wavemap</depend>
+  <depend>wavemap_msgs</depend>
+
+  <depend>rclcpp</depend>
+  <depend>tf2_eigen</depend>
+  <depend>geometry_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
