@@ -6,17 +6,114 @@
 
 This test plan validates the end-to-end functionality of the wavemap ROS 2 port using real hardware:
 
-| Hardware | Role | Connection |
-|----------|------|------------|
-| **Livox MID-360** | 3D LiDAR point cloud input | Ethernet (192.168.123.120) |
-| **OAK 4 D Wide** (RVC4) | Depth image + RGB point cloud input | USB-C / Ethernet via DepthAI v3 |
-| **Host PC** | ROS 2 Jazzy node execution | Ubuntu 24.04 |
+| Hardware | Role | Connection | Default IP |
+|----------|------|------------|-----------|
+| **Livox MID-360** | 3D LiDAR point cloud input | Ethernet | `192.168.1.137` (LiDAR) / `192.168.1.50` (host) |
+| **OAK 4 D Wide** (RVC4) | Depth image + RGB point cloud input | Ethernet / USB-C | Discovered via `oakctl` |
+| **Host PC** | ROS 2 Jazzy node execution | Ubuntu 24.04 | — |
 
 ---
 
-## 1. Prerequisites
+## 1. Network & IP Configuration
 
-### 1.1 System Setup
+### 1.1 Livox MID-360 IP Configuration
+
+The LiDAR IP is configured in `config/sensor_configs/MID360_config.json`:
+
+```
+src/wavemap/interfaces/ros2/wavemap_ros2/config/sensor_configs/MID360_config.json
+```
+
+**Key fields to edit:**
+
+```jsonc
+{
+  "MID360": {
+    "host_net_info": {
+      "cmd_data_ip": "192.168.1.50",      // ← Host PC IP on the LiDAR subnet
+      "push_msg_ip": "192.168.1.50",
+      "point_data_ip": "192.168.1.50",
+      "imu_data_ip": "192.168.1.50"
+    }
+  },
+  "lidar_configs": [
+    {
+      "ip": "192.168.1.137"                // ← LiDAR IP address
+    }
+  ]
+}
+```
+
+**To change the LiDAR IP** (e.g., to `192.168.123.120` on the Unitree subnet):
+
+```bash
+# Edit the config
+nano src/wavemap/interfaces/ros2/wavemap_ros2/config/sensor_configs/MID360_config.json
+
+# Change:
+#   "ip": "192.168.123.120"          (LiDAR address)
+#   All host IPs to "192.168.123.1"  (Host address on same subnet)
+```
+
+**Verify LiDAR connectivity:**
+
+```bash
+ping 192.168.1.137        # Or your configured LiDAR IP
+```
+
+### 1.2 OAK 4 D Wide Camera IP Configuration
+
+The OAK camera with RVC4 runs as a standalone networked device managed by `oakctl`:
+
+```bash
+# Install oakctl
+pip install oakctl
+
+# Discover all cameras on the network
+oakctl device list
+
+# Connect to a specific camera
+oakctl connect <CAMERA_IP>
+
+# Check camera status
+oakctl device info
+```
+
+**Network modes:**
+
+| Mode | Description | Configuration |
+|------|-------------|---------------|
+| **DHCP** (default) | Camera gets IP from router/switch | Automatic — use `oakctl device list` to find |
+| **Static IP** | Fixed IP on a specific subnet | Configure via `oakctl` device settings |
+| **USB-C** | Direct USB connection | No IP needed — `oakctl` auto-detects |
+
+**To set a static IP** (e.g., for `192.168.123.122`):
+
+```bash
+oakctl connect <current_ip>
+oakctl device network set --ip 192.168.123.122 --netmask 255.255.255.0 --gateway 192.168.123.1
+```
+
+### 1.3 Host Network Configuration
+
+Ensure the host PC has interfaces on both sensor subnets:
+
+```bash
+# Example: Add a static IP for the LiDAR subnet
+sudo ip addr add 192.168.1.50/24 dev eth0
+
+# Example: Add a static IP for the OAK camera subnet (if different)
+sudo ip addr add 192.168.123.1/24 dev eth0
+
+# Verify
+ip addr show eth0
+```
+
+---
+
+## 2. Prerequisites
+
+### 2.1 System Packages
 
 ```bash
 # ROS 2 Jazzy
@@ -25,62 +122,58 @@ source /opt/ros/jazzy/setup.bash
 # Wavemap workspace
 cd ~/wavemap_ws && source install/setup.bash
 
-# CycloneDDS (recommended for cross-device topics)
+# CycloneDDS (required for cross-device/cross-distro ROS 2 topic discovery)
 sudo apt install ros-jazzy-rmw-cyclonedds-cpp
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+# OAK camera CLI
+pip install oakctl
 ```
 
-### 1.2 Livox MID-360 Setup
+### 2.2 Deploy OAK Standalone Apps
+
+Two pre-built standalone apps are provided in `oak_apps/`:
+
+#### App 1: Depth + RGB Driver (for `depth_image_topic` input)
 
 ```bash
-# Verify LiDAR connectivity
-ping 192.168.123.120
+cd oak_apps/wavemap-depth-driver
+oakctl app run .
+```
 
-# Launch Livox ROS 2 driver
+Published topics:
+- `/oak/rgb/image_raw` — RGB image
+- `/oak/stereo/image_raw` — Aligned depth image (16UC1, mm scale)
+- `/oak/stereo/camera_info` — Depth camera intrinsics
+- `/oak/imu/data` — IMU data
+
+#### App 2: RGB-D Point Cloud Driver (for `pointcloud_topic` input)
+
+```bash
+cd oak_apps/wavemap-rgbd-pcl-driver
+oakctl app run .
+```
+
+Published topics:
+- `/oak/rgbd/points` — Colored 3D point cloud
+
+### 2.3 Launch Livox MID-360 Driver
+
+```bash
+# Verify connectivity
+ping 192.168.1.137
+
+# Launch
 ros2 launch livox_ros_driver2 msg_MID360_launch.py
 ```
 
-**Expected topics:**
-```
-/livox/lidar    (sensor_msgs/msg/PointCloud2 or livox_ros_driver2/msg/CustomMsg)
-/livox/imu      (sensor_msgs/msg/Imu)
-```
-
-### 1.3 OAK 4 D Wide (RVC4) Setup
-
-The OAK camera runs DepthAI v3 as an on-device app using `oakctl`. Two driver configurations are available:
-
-#### Option A: Basic Driver (RGB + Depth Image)
-
-Based on [ros-driver-basic](https://github.com/luxonis/oak-examples/tree/main/apps/ros/ros-driver-basic):
-```bash
-cd oak-examples/apps/ros/ros-driver-basic
-oakctl app run .
-```
-
-**Expected topics:**
-```
-/oak/rgb/image_raw       (sensor_msgs/msg/Image)
-/oak/stereo/image_raw    (sensor_msgs/msg/Image)   ← depth input for wavemap
-/oak/imu/data            (sensor_msgs/msg/Imu)
-```
-
-#### Option B: RGB Point Cloud Driver
-
-Based on [ros-driver-rgb-pcl](https://github.com/luxonis/oak-examples/tree/main/apps/ros/ros-driver-rgb-pcl):
-```bash
-cd oak-examples/apps/ros/ros-driver-rgb-pcl
-oakctl app run .
-```
-
-**Expected topics:**
-```
-/oak/rgbd/points    (sensor_msgs/msg/PointCloud2)   ← pointcloud input for wavemap
-```
+Published topics:
+- `/livox/lidar` — `PointCloud2` or `CustomMsg`
+- `/livox/imu` — IMU data
 
 ---
 
-## 2. Test Cases
+## 3. Test Cases
 
 ### TC-01: Build Verification
 
@@ -92,9 +185,33 @@ oakctl app run .
 
 ---
 
-### TC-02: Livox MID-360 — Point Cloud Mapping
+### TC-02: OAK Depth Driver Deployment
+
+| Step | Action | Expected Result |
+|------|--------|----------------|
+| 1 | `oakctl device list` | Camera discovered with IP |
+| 2 | `cd oak_apps/wavemap-depth-driver && oakctl app run .` | App builds and starts on camera |
+| 3 | `ros2 topic list \| grep oak` | `/oak/rgb/image_raw`, `/oak/stereo/image_raw`, `/oak/imu/data` visible |
+| 4 | `ros2 topic hz /oak/stereo/image_raw` | Publishing at ≥ 15 Hz |
+| 5 | `ros2 topic echo /oak/stereo/camera_info --once` | Intrinsics (fx, fy, cx, cy) printed |
+
+---
+
+### TC-03: OAK Point Cloud Driver Deployment
+
+| Step | Action | Expected Result |
+|------|--------|----------------|
+| 1 | `cd oak_apps/wavemap-rgbd-pcl-driver && oakctl app run .` | App builds and starts on camera |
+| 2 | `ros2 topic list \| grep oak` | `/oak/rgbd/points` visible |
+| 3 | `ros2 topic hz /oak/rgbd/points` | Publishing at ≥ 10 Hz |
+| 4 | `ros2 topic echo /oak/rgbd/points --once \| head -5` | Valid PointCloud2 header |
+
+---
+
+### TC-04: Livox MID-360 — Point Cloud Mapping
 
 **Config:** `wavemap_livox_mid360.yaml`
+**LiDAR IP:** Edit `config/sensor_configs/MID360_config.json` → `lidar_configs[0].ip`
 
 | Step | Action | Expected Result |
 |------|--------|----------------|
@@ -103,23 +220,24 @@ oakctl app run .
 | 3 | `ros2 launch wavemap_ros2 livox_mid360.launch.py` | Node starts without errors |
 | 4 | Wait 10 seconds | Map data being published on `/wavemap/map` |
 | 5 | `ros2 topic echo /wavemap/map --once` | Valid `wavemap_msgs/msg/Map` message received |
-| 6 | `ros2 topic hz /wavemap/map` | Publishing at configured rate (~0.5 Hz for `once_every: 2.0`) |
-| 7 | `ros2 service call /wavemap/save_map wavemap_msgs/srv/FilePath "{file_path: '/tmp/test_map.wvm'}"` | Map file saved successfully |
-| 8 | Verify file exists: `ls -la /tmp/test_map.wvm` | Non-zero file size |
+| 6 | `ros2 topic hz /wavemap/map` | Publishing at configured rate (~0.5 Hz) |
+| 7 | `ros2 service call /wavemap/save_map wavemap_msgs/srv/FilePath "{file_path: '/tmp/test_map.wvm'}"` | Map file saved |
+| 8 | `ls -la /tmp/test_map.wvm` | Non-zero file size |
 
 **Pass criteria:** Map publishes continuously with no crashes for ≥ 60 seconds.
 
 ---
 
-### TC-03: OAK 4 D Wide — Depth Image Mapping
+### TC-05: OAK 4 D Wide — Depth Image Mapping
 
-**Config:** Custom `wavemap_oak4d_depth.yaml` (see below)
+**Config:** `wavemap_oak4d_depth.yaml` (see Section 5)
+**Camera setup:** Deploy `wavemap-depth-driver` app first (TC-02)
 
 | Step | Action | Expected Result |
 |------|--------|----------------|
-| 1 | Start OAK basic driver: `oakctl app run .` | `/oak/stereo/image_raw` publishing |
-| 2 | Verify depth topic: `ros2 topic hz /oak/stereo/image_raw` | Publishing at ≥ 15 Hz |
-| 3 | Start TF publisher for camera extrinsics | TF `odom → oak_frame` available |
+| 1 | Verify `/oak/stereo/image_raw` publishing | ≥ 15 Hz |
+| 2 | Read intrinsics: `ros2 topic echo /oak/stereo/camera_info --once` | Copy fx/fy/cx/cy into config |
+| 3 | Start TF publisher for camera extrinsics | TF `odom → oak-d-base-frame` available |
 | 4 | Launch wavemap with depth config | Node starts, subscribes to depth image |
 | 5 | Wait 10 seconds | Map data published on `/wavemap/map` |
 | 6 | `ros2 topic echo /wavemap/pointcloud --once` | Valid PointCloud2 with occupied cells |
@@ -128,41 +246,41 @@ oakctl app run .
 
 ---
 
-### TC-04: OAK 4 D Wide — Point Cloud Mapping
+### TC-06: OAK 4 D Wide — Point Cloud Mapping
 
-**Config:** Custom `wavemap_oak4d_pcl.yaml` (see below)
+**Config:** `wavemap_oak4d_pcl.yaml` (see Section 5)
+**Camera setup:** Deploy `wavemap-rgbd-pcl-driver` app first (TC-03)
 
 | Step | Action | Expected Result |
 |------|--------|----------------|
-| 1 | Start OAK RGB-PCL driver: `oakctl app run .` | `/oak/rgbd/points` publishing |
-| 2 | Verify PCL topic: `ros2 topic hz /oak/rgbd/points` | Publishing at ≥ 10 Hz |
-| 3 | Start TF publisher for camera extrinsics | TF `odom → oak_frame` available |
-| 4 | Launch wavemap with PCL config | Node starts, subscribes to pointcloud |
-| 5 | Wait 10 seconds | Map data published on `/wavemap/map` |
-| 6 | Monitor CPU/memory: `top -p $(pgrep ros_server)` | CPU ≤ 200%, RSS ≤ 2 GB |
+| 1 | Verify `/oak/rgbd/points` publishing | ≥ 10 Hz |
+| 2 | Start TF publisher for camera extrinsics | TF `odom → oak-d-base-frame` available |
+| 3 | Launch wavemap with PCL config | Node starts, subscribes to pointcloud |
+| 4 | Wait 10 seconds | Map data published on `/wavemap/map` |
+| 5 | Monitor CPU/memory: `top -p $(pgrep ros_server)` | CPU ≤ 200%, RSS ≤ 2 GB |
 
 **Pass criteria:** Point clouds integrated into map without errors for ≥ 60 seconds.
 
 ---
 
-### TC-05: Multi-Sensor Fusion (Livox + OAK)
+### TC-07: Multi-Sensor Fusion (Livox + OAK)
 
-**Config:** Custom `wavemap_mid360_oak4d.yaml` (see below)
+**Config:** `wavemap_mid360_oak4d.yaml` (see Section 5)
 
 | Step | Action | Expected Result |
 |------|--------|----------------|
 | 1 | Start Livox driver + odometry | `/livox/lidar` and TF publishing |
-| 2 | Start OAK RGB-PCL driver | `/oak/rgbd/points` publishing |
-| 3 | Launch wavemap with multi-sensor config | Node starts, subscribes to both inputs |
+| 2 | Deploy OAK depth driver (TC-02) | `/oak/stereo/image_raw` publishing |
+| 3 | Launch wavemap with multi-sensor config | Node subscribes to both inputs |
 | 4 | Wait 30 seconds | Map contains data from both sensors |
-| 5 | Save map and verify | File contains fused occupancy data |
+| 5 | Save map and verify size | File contains fused occupancy data |
 | 6 | Monitor memory for 5 minutes | No memory leaks (RSS stable ± 10%) |
 
 **Pass criteria:** Both sensor inputs fused into single map for ≥ 5 minutes.
 
 ---
 
-### TC-06: Rosbag Record and Replay
+### TC-08: Rosbag Record and Replay
 
 | Step | Action | Expected Result |
 |------|--------|----------------|
@@ -175,7 +293,7 @@ oakctl app run .
 
 ---
 
-### TC-07: Map Operations
+### TC-09: Map Operations
 
 | Step | Action | Expected Result |
 |------|--------|----------------|
@@ -187,7 +305,18 @@ oakctl app run .
 
 ---
 
-## 3. Example Configurations
+## 4. IP Address Quick Reference
+
+| Device | Config File | Field | Default |
+|--------|------------|-------|---------|
+| **Livox MID-360** (LiDAR IP) | `config/sensor_configs/MID360_config.json` | `lidar_configs[0].ip` | `192.168.1.137` |
+| **Livox MID-360** (Host IP) | `config/sensor_configs/MID360_config.json` | `host_net_info.cmd_data_ip` (and others) | `192.168.1.50` |
+| **OAK 4 D Wide** (Camera IP) | Managed by `oakctl` | `oakctl device list` / `oakctl connect` | DHCP assigned |
+| **OAK 4 D Wide** (Static IP) | Managed by `oakctl` | `oakctl device network set --ip <IP>` | — |
+
+---
+
+## 5. Example Wavemap Configurations
 
 ### wavemap_oak4d_depth.yaml
 
@@ -201,6 +330,7 @@ measurement_integrators:
   depth_camera:
     projection_model:
       type: pinhole_camera_projector
+      # Replace with actual intrinsics from /oak/stereo/camera_info
       width: 640
       height: 480
       fx: 500.0
@@ -217,7 +347,8 @@ inputs:
     topic_name: /oak/stereo/image_raw
     measurement_integrator_names:
       - depth_camera
-    depth_scale_factor: 1000
+    depth_scale_factor: 1000       # OAK depth is in mm (16UC1)
+    sensor_frame_id: oak-d-base-frame
     max_wait_for_pose: 1.0
 
 map_operations:
@@ -260,6 +391,7 @@ inputs:
     topic_type: pointcloud2
     measurement_integrator_names:
       - oak_pointcloud
+    sensor_frame_id: oak-d-base-frame
     max_wait_for_pose: 1.0
 
 map_operations:
@@ -298,6 +430,7 @@ measurement_integrators:
   depth_camera:
     projection_model:
       type: pinhole_camera_projector
+      # Replace with actual intrinsics from /oak/stereo/camera_info
       width: 640
       height: 480
       fx: 500.0
@@ -321,7 +454,7 @@ inputs:
     measurement_integrator_names:
       - depth_camera
     depth_scale_factor: 1000
-    sensor_frame_id: oak_frame
+    sensor_frame_id: oak-d-base-frame
     max_wait_for_pose: 1.0
 
 map_operations:
@@ -338,23 +471,26 @@ map_operations:
 
 ---
 
-## 4. Pass / Fail Summary
+## 6. Pass / Fail Summary
 
 | Test Case | Description | Status |
 |-----------|-------------|--------|
 | TC-01 | Build verification | ☐ |
-| TC-02 | Livox MID-360 point cloud mapping | ☐ |
-| TC-03 | OAK 4D depth image mapping | ☐ |
-| TC-04 | OAK 4D point cloud mapping | ☐ |
-| TC-05 | Multi-sensor fusion (Livox + OAK) | ☐ |
-| TC-06 | Rosbag record and replay | ☐ |
-| TC-07 | Map operations (crop, save, load) | ☐ |
+| TC-02 | OAK depth driver deployment | ☐ |
+| TC-03 | OAK point cloud driver deployment | ☐ |
+| TC-04 | Livox MID-360 point cloud mapping | ☐ |
+| TC-05 | OAK 4D depth image mapping | ☐ |
+| TC-06 | OAK 4D point cloud mapping | ☐ |
+| TC-07 | Multi-sensor fusion (Livox + OAK) | ☐ |
+| TC-08 | Rosbag record and replay | ☐ |
+| TC-09 | Map operations (crop, save, load) | ☐ |
 
 ---
 
-## 5. Environment Notes
+## 7. Environment Notes
 
-- **RMW**: CycloneDDS recommended for OAK camera cross-device topic discovery
-- **OAK firmware**: DepthAI v3 via `oakctl` on RVC4 compute module
-- **TF**: An external odometry source (e.g., FAST-LIO, visual odometry) is required for all tests
-- **Camera calibration**: The pinhole parameters in the example configs are placeholders — replace with actual intrinsics from `/oak/rgb/camera_info`
+- **RMW**: CycloneDDS is **required** for OAK camera topic discovery (camera runs Kilted, host runs Jazzy)
+- **OAK firmware**: DepthAI v3 via `oakctl` on RVC4 — apps are in `oak_apps/` directory
+- **TF**: An external odometry source (e.g., FAST-LIO, visual odometry) is required for all mapping tests
+- **Camera calibration**: The pinhole parameters in the example configs are placeholders — replace with actual intrinsics from `/oak/stereo/camera_info`
+- **Livox driver**: The `livox_ros_driver2` package must be in the colcon workspace (included at `src/livox_ros_driver2`)

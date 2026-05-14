@@ -1,0 +1,23 @@
+/**:
+  ros__parameters:
+    driver:
+      i_enable_ir: true
+      i_output_disparity: false
+      i_depth_filter_size: 5
+      i_depth_threshold: [200, 10000]
+    pipeline_gen:
+      i_pipeline_type: RGBD
+    rgb:
+      i_fps: 15.0
+      i_resolution: "1080P"
+      i_publish_topic: true
+    stereo:
+      i_fps: 15.0
+      i_lr_check: true
+      i_align_depth: true
+      i_output_depth: true
+      i_publish_topic: true
+    imu:
+      i_publish_topic: true
+      i_batch_report_threshold: 5
+      i_max_batch_reports: 10
